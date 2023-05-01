@@ -1,0 +1,291 @@
+﻿#include "widget.h"
+#include "ui_widget.h"
+#include<math.h>
+Widget::Widget(QWidget *parent)
+    : QWidget(parent)
+    , ui(new Ui::Widget)
+{
+    ui->setupUi(this);
+
+
+    dchart=new dChart();
+
+
+#if 0   //debug使用定时器 
+    QTimer* timer = new QTimer(this);
+    timer->setInterval(100); // 设置定时器超时时间为1秒
+    connect(timer, &QTimer::timeout, this, &Widget::onTimerTimeout); // 连接定时器的超时信号到槽函数
+    timer->start(); // 启动定时器
+#endif
+
+
+    pageSlider=new QSlider(Qt::Horizontal);
+    pageSlider->setRange(0,0);
+    this->pageSlider->setEnabled(false);
+    connect(dchart,&dChart::curPageChange,this,[this](){
+        pageSlider->setRange(0,this->dchart->getCurPage());
+        pageSlider->setValue(this->dchart->getCurPage());
+    });
+    connect(pageSlider,&QSlider::valueChanged,this,[this](int page){
+        //qDebug()<<"mid:"<<midScale<<endl;
+        this->dchart->browsing_mode(page);
+    });
+
+    checkBox = new QCheckBox(tr("回看"));
+    connect(checkBox, &QCheckBox::stateChanged,this,[this](){
+        if(this->checkBox->isChecked()){
+            this->dchart->setViewMode(true);
+            this->pageSlider->setEnabled(true);
+        }else{
+            this->dchart->setViewMode(false);
+            this->pageSlider->setEnabled(false);
+        }
+    });
+
+    rangeButton     =new QPushButton("范围更新");
+    minLine         =new QLineEdit();
+    maxLine         =new QLineEdit();
+    chartGroup      =new QGridLayout();
+    chartBox        =new QGroupBox();
+    maxPageButton   =new QPushButton("x轴范围");
+    maxPageLine     =new QLineEdit();
+    maxPageLayout   =new QHBoxLayout();
+    maxPageLayout->addWidget(maxPageButton);
+    maxPageLayout->addWidget(maxPageLine);
+
+
+    chartGroup->addWidget(rangeButton,0,0);
+    chartGroup->addWidget(minLine,0,1);
+    chartGroup->addWidget(maxLine,0,2);
+    chartGroup->addWidget(checkBox,1,0);
+    chartGroup->addWidget(pageSlider,1,1);
+    chartGroup->addLayout(maxPageLayout,1,2);
+    chartGroup->setRowStretch(0,1);
+    chartGroup->setRowStretch(1,1);
+    //QGroupBox*scaleGroupBox=new QGroupBox("比例调节");
+    connect(rangeButton,&QPushButton::clicked,this,[this](){
+        static double rangeLineLText=0;
+        static double rangeLineRText=0 ;
+        try{
+            bool ok;
+            rangeLineLText = this->minLine->text().toInt(&ok);
+            if(!ok){throw "error";}
+            rangeLineRText = this->maxLine->text().toInt(&ok);
+            if(!ok){throw "error";}
+            this->dchart->setRange(rangeLineLText,rangeLineRText);
+        }catch(...){
+            QMessageBox::warning(nullptr, "error", "parment error",
+                                     QMessageBox::Ok | QMessageBox::Cancel);
+        }
+
+    });
+    connect(maxPageButton,&QPushButton::clicked,this,[this](){
+        bool ok;
+        int ret=this->maxPageLine->text().toInt(&ok);
+        if(ok){
+            if(ret>10&&ret<1000){
+                this->dchart->setMaxPage(ret);
+            }
+        }
+    });
+    chartBox=new QGroupBox("波形图配置");
+    chartBox->setLayout(chartGroup);
+
+
+
+    //文本框部分
+    textView=new QTextEdit();
+    textView->setReadOnly(true);
+    sendEdit=new QTextEdit();
+    QVBoxLayout * textLayout=new QVBoxLayout();
+    textLayout->addWidget(textView,5);
+    textLayout->addWidget(sendEdit,1);
+    textGroupBox=new QGroupBox();
+    textGroupBox->setLayout(textLayout);
+
+    tabWidget=new QTabWidget();
+
+    QVBoxLayout*vlayoutL=new QVBoxLayout();
+    vlayoutL->addWidget(chartBox,1);
+    vlayoutL->addWidget(dchart,5);
+    chartGroupBox=new QGroupBox();
+    chartGroupBox->setLayout(vlayoutL);
+
+    tabWidget->addTab(textGroupBox,"文本框");
+    tabWidget->addTab(chartGroupBox,"波形图");
+
+#define PORT
+#ifdef PORT
+
+    serialPort          =new SerialPort();
+    portNameBox         =new QComboBox;
+    baudRateBox         =new QComboBox;
+    parityBox           =new QComboBox;
+    dataBitsBox         =new QComboBox;
+    stopBitsBox         =new QComboBox;
+    endMarkerBox        =new QComboBox;
+    button  =new QPushButton(tr("发送"));
+    flush   =new QPushButton(tr("刷新串口"));
+    clearText=new QPushButton(tr("清空文本"));
+    connect(button,&QPushButton::clicked,this,[this](){
+        //memcopy(this->sendEdit->toPlainText().toUtf8().data();
+        this->serialPort->dataSend(this->sendEdit->toPlainText().toUtf8());
+    });
+    connect(clearText,&QPushButton::clicked,this,[this](){
+        //memcopy(this->sendEdit->toPlainText().toUtf8().data();
+        this->textView->setText("");
+    });
+    for(auto &a:serialPort->getPortNameList()){
+        portNameBox->addItem(a);
+    }
+    for(auto &a:serialPort->getBaudRateList()){
+        baudRateBox->addItem(a);
+    }
+    for(auto &a:serialPort->getParityList()){
+        parityBox->addItem(a);
+    }
+    for(auto &a:serialPort->getDataBitsList()){
+        dataBitsBox->addItem(a);
+    }
+    for(auto &a:serialPort->getStopBitsList()){
+        stopBitsBox->addItem(a);
+    }
+    for(auto &a:serialPort->getEndMarkerList()){
+        QString s=a;
+        s.replace("\n","\\n");
+        s.replace("\r","\\r");
+        endMarkerBox->addItem(s);
+    }
+
+
+    connect(flush, &QPushButton::clicked, this,[this]() {
+        serialPort->refreshSerialPort();
+
+//        //解决box的clear方法崩溃（暂停槽函数的绑定）
+        void (QComboBox::*p)(int )=&QComboBox::currentIndexChanged;
+        disconnect(portNameBox, p,this,&Widget::changeIndex);
+        portNameBox->clear();
+        connect(portNameBox, p,this,&Widget::changeIndex);
+
+        for(auto &a:serialPort->getPortNameList()){
+            portNameBox->addItem(a);
+        }
+    });
+    connect(serialPort,&SerialPort::serialportOpen,this,[this](){
+        this->button->setStyleSheet("QPushButton{"
+                                    "background-color:green;"
+                                    "}");
+    });
+    connect(serialPort,&SerialPort::serialportClose,this,[this](){
+        //qDebug()<<"close"<<endl;
+        this->button->setStyleSheet("QPushButton{"
+                                    "background-color:white;"
+                                    "}");
+    });
+    void (QComboBox::*p)(int )=&QComboBox::currentIndexChanged;
+    connect(portNameBox, p,this,&Widget::changeIndex);
+    connect(baudRateBox, p,this,[this](int index){
+        this->serialPort->setBaudRateC(index);
+    });
+    connect(parityBox, p,this,[this](int index){
+        this->serialPort->setParityC(index);
+    });
+    connect(dataBitsBox, p,this,[this](int index){
+        this->serialPort->setDataBitsC(index);
+    });
+    connect(stopBitsBox, p,this,[this](int index){
+        this->serialPort->setStopBitsC(index);
+    });
+    connect(endMarkerBox, p,this,[this](int index){
+        this->serialPort->setEndMarker(endMarkerBox->currentText());
+    });
+    connect(serialPort, &SerialPort::dataReady, this,[this]() {
+        //serialPort->getData();
+        QString ss=serialPort->getData();
+        //qDebug() << "Received data:" << ss;
+        QString s;
+        try {
+            s=this->textView->toPlainText().toUtf8().data();
+            s+=ss;
+            this->textView->setText(s);
+        } catch (...) {
+            qDebug()<<"error"<<endl;
+        }
+        bool ok;
+        double digit=ss.toDouble(&ok);
+        if(ok){
+            dchart->push_value(digit);
+        }
+
+    });
+
+
+
+
+
+
+
+    QLabel*portNameLabel    = new QLabel("串口名");
+    QLabel*baudRateLabel    = new QLabel("比特率");
+    QLabel*parityLabel      = new QLabel("校验位");
+    QLabel*dataBitsLabel    = new QLabel("数据位");
+    QLabel*stopBitsLabel    = new QLabel("停止位");
+    QLabel*endMarkerLabel    = new QLabel("换行符");
+
+    QGridLayout *gColorLayout = new QGridLayout();
+    gColorLayout->addWidget(portNameLabel,0,0);
+    gColorLayout->addWidget(portNameBox,0,1);
+
+    gColorLayout->addWidget(baudRateLabel,1,0);
+    gColorLayout->addWidget(baudRateBox,1,1);
+
+    gColorLayout->addWidget(parityLabel,2,0);
+    gColorLayout->addWidget(parityBox,2,1);
+
+    gColorLayout->addWidget(dataBitsLabel,3,0);
+    gColorLayout->addWidget(dataBitsBox,3,1);
+
+    gColorLayout->addWidget(stopBitsLabel,4,0);
+    gColorLayout->addWidget(stopBitsBox,4,1);
+    gColorLayout->addWidget(endMarkerLabel,5,0);
+    gColorLayout->addWidget(endMarkerBox,5,1);
+    QGroupBox *gColorGroup=new QGroupBox("参数配置");
+    gColorGroup->setLayout(gColorLayout);
+
+#endif
+
+    QVBoxLayout*vlayout=new QVBoxLayout();
+    vlayout->addWidget(gColorGroup);
+    vlayout->addWidget(button);
+    vlayout->addWidget(flush);
+    vlayout->addWidget(clearText);
+    QHBoxLayout*hlayout=new QHBoxLayout(this);
+
+
+
+
+    hlayout->addWidget(tabWidget);
+    hlayout->addLayout(vlayout);
+
+
+
+//    const QString qss="QPushButton{"
+//                      "background-color:#d2d2d2;"
+//                      "}";
+//    this->setStyleSheet(qss);
+
+}
+void Widget::changeIndex(int index){
+    qDebug()<<index<<endl;
+    this->serialPort->setSerialPort(index);
+}
+void Widget::onTimerTimeout()
+{
+       int tmp=-rand()%40;
+       dchart->push_value(tmp);
+}
+Widget::~Widget()
+{
+    delete ui;
+}
+
